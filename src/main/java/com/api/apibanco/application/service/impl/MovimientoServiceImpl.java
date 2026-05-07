@@ -1,7 +1,9 @@
 package com.api.apibanco.application.service.impl;
 
 import com.api.apibanco.application.dto.request.MovimientoRequest;
+import com.api.apibanco.application.dto.request.TransferenciaRequest;
 import com.api.apibanco.application.dto.response.MovimientoResponse;
+import com.api.apibanco.application.dto.response.TransferenciaResponse;
 import com.api.apibanco.application.mapper.MovimientoMapper;
 import com.api.apibanco.application.service.MovimientoService;
 import com.api.apibanco.domain.model.Cuenta;
@@ -52,6 +54,56 @@ public class MovimientoServiceImpl implements MovimientoService {
         Movimiento movimientoGuardado = movimientoRepository.save(movimiento);
         recalcularSaldos(cuenta.getId());
         return MovimientoMapper.TO_RESPONSE.apply(movimientoGuardado);
+    }
+
+    @Override
+    @Transactional
+    public TransferenciaResponse transferir(TransferenciaRequest request) {
+        validarTransferencia(request);
+        Cuenta cuentaOrigen = cuentaRepository.findByIdAndEstadoTrueAndClienteEstadoTrue(request.cuentaOrigenId())
+                .orElseThrow(() -> new ResourceNotFoundException("Cuenta origen no encontrada con id " + request.cuentaOrigenId()));
+        Cuenta cuentaDestino = cuentaRepository.findByIdAndEstadoTrueAndClienteEstadoTrue(request.cuentaDestinoId())
+                .orElseThrow(() -> new ResourceNotFoundException("Cuenta destino no encontrada con id " + request.cuentaDestinoId()));
+
+        validarCuentaActiva(cuentaOrigen);
+        validarCuentaActiva(cuentaDestino);
+
+        LocalDateTime fechaTransferencia = request.fecha() == null ? LocalDateTime.now() : request.fecha();
+        MovimientoRequest retiroRequest = new MovimientoRequest(
+                fechaTransferencia,
+                TipoMovimiento.RETIRO,
+                request.valor(),
+                cuentaOrigen.getId()
+        );
+
+        validarSaldoDisponible(cuentaOrigen, retiroRequest, null);
+        validarLimiteDiario(cuentaOrigen, retiroRequest, null);
+
+        Movimiento movimientoOrigen = Movimiento.builder()
+                .fecha(fechaTransferencia)
+                .tipoMovimiento(TipoMovimiento.RETIRO)
+                .valor(request.valor().abs().negate())
+                .saldo(calcularSaldoProvisional(cuentaOrigen, request.valor().abs().negate()))
+                .cuenta(cuentaOrigen)
+                .build();
+        Movimiento movimientoDestino = Movimiento.builder()
+                .fecha(fechaTransferencia)
+                .tipoMovimiento(TipoMovimiento.DEPOSITO)
+                .valor(request.valor().abs())
+                .saldo(calcularSaldoProvisional(cuentaDestino, request.valor().abs()))
+                .cuenta(cuentaDestino)
+                .build();
+
+        Movimiento movimientoOrigenGuardado = movimientoRepository.save(movimientoOrigen);
+        Movimiento movimientoDestinoGuardado = movimientoRepository.save(movimientoDestino);
+
+        recalcularSaldos(cuentaOrigen.getId());
+        recalcularSaldos(cuentaDestino.getId());
+
+        return new TransferenciaResponse(
+                MovimientoMapper.TO_RESPONSE.apply(movimientoOrigenGuardado),
+                MovimientoMapper.TO_RESPONSE.apply(movimientoDestinoGuardado)
+        );
     }
 
     @Override
@@ -121,6 +173,19 @@ public class MovimientoServiceImpl implements MovimientoService {
     private void validarValor(BigDecimal valor) {
         if (valor == null || valor.compareTo(CERO) == 0) {
             throw new BusinessException("El valor del movimiento debe ser diferente de cero");
+        }
+    }
+
+    private void validarTransferencia(TransferenciaRequest request) {
+        validarValor(request.valor());
+        if (request.valor().compareTo(CERO) < 0) {
+            throw new BusinessException("El valor de la transferencia debe ser mayor a cero");
+        }
+        if (request.cuentaOrigenId() == null || request.cuentaDestinoId() == null) {
+            throw new BusinessException("Las cuentas origen y destino son obligatorias");
+        }
+        if (request.cuentaOrigenId().equals(request.cuentaDestinoId())) {
+            throw new BusinessException("La cuenta origen y la cuenta destino deben ser diferentes");
         }
     }
 

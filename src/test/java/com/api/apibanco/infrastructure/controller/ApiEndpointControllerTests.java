@@ -6,6 +6,7 @@ import com.api.apibanco.application.dto.response.CuentaResponse;
 import com.api.apibanco.application.dto.response.MovimientoResponse;
 import com.api.apibanco.application.dto.response.ReporteEstadoCuentaResponse;
 import com.api.apibanco.application.dto.response.ReporteMovimientoResponse;
+import com.api.apibanco.application.dto.response.TransferenciaResponse;
 import com.api.apibanco.application.service.BusquedaService;
 import com.api.apibanco.application.service.ClienteService;
 import com.api.apibanco.application.service.CuentaService;
@@ -338,6 +339,37 @@ class ApiEndpointControllerTests {
     }
 
     @Test
+    void crearTransferencia_debeResponder201ConApiResponse() throws Exception {
+        when(movimientoService.transferir(any())).thenReturn(transferencia());
+
+        mockMvc.perform(post("/api/v1/movimientos/transferencias")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(transferenciaJsonValida()))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.message").value("Transferencia creada correctamente"))
+                .andExpect(jsonPath("$.data.movimientoOrigen.tipoMovimiento").value("RETIRO"))
+                .andExpect(jsonPath("$.data.movimientoOrigen.valor").value(-150))
+                .andExpect(jsonPath("$.data.movimientoDestino.tipoMovimiento").value("DEPOSITO"))
+                .andExpect(jsonPath("$.data.movimientoDestino.valor").value(150));
+    }
+
+    @Test
+    void crearTransferencia_conDatosInvalidos_debeResponder400() throws Exception {
+        mockMvc.perform(post("/api/v1/movimientos/transferencias")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "fecha": "2026-04-30T06:44:53.255",
+                                  "cuentaOrigenId": 1,
+                                  "cuentaDestinoId": 2,
+                                  "valor": 0
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.details.valor").value("El valor de la transferencia debe ser mayor a cero"));
+    }
+
+    @Test
     void listarMovimientos_sinBusqueda_debeResponderPagina() throws Exception {
         when(movimientoService.listar(eq(""), any())).thenReturn(new PageImpl<>(List.of(movimiento())));
 
@@ -511,6 +543,28 @@ class ApiEndpointControllerTests {
         );
     }
 
+    private TransferenciaResponse transferencia() {
+        MovimientoResponse movimientoOrigen = new MovimientoResponse(
+                10L,
+                LocalDateTime.of(2026, 4, 30, 6, 44, 53),
+                TipoMovimiento.RETIRO,
+                BigDecimal.valueOf(-150),
+                BigDecimal.valueOf(1850),
+                true,
+                1L
+        );
+        MovimientoResponse movimientoDestino = new MovimientoResponse(
+                11L,
+                LocalDateTime.of(2026, 4, 30, 6, 44, 53),
+                TipoMovimiento.DEPOSITO,
+                BigDecimal.valueOf(150),
+                BigDecimal.valueOf(250),
+                true,
+                2L
+        );
+        return new TransferenciaResponse(movimientoOrigen, movimientoDestino);
+    }
+
     private ReporteEstadoCuentaResponse reporte() {
         ReporteMovimientoResponse movimiento = new ReporteMovimientoResponse(
                 LocalDateTime.of(2026, 4, 30, 13, 41, 5),
@@ -580,6 +634,17 @@ class ApiEndpointControllerTests {
                   "tipoMovimiento": "DEPOSITO",
                   "valor": 100,
                   "cuentaId": 1
+                }
+                """;
+    }
+
+    private String transferenciaJsonValida() {
+        return """
+                {
+                  "fecha": "2026-04-30T06:44:53.255",
+                  "cuentaOrigenId": 1,
+                  "cuentaDestinoId": 2,
+                  "valor": 150
                 }
                 """;
     }
